@@ -28,12 +28,15 @@ To try it without the real feed: `python scripts/make_synthetic_gtfs.py synth.zi
 
 ## Web viewer
 
-`docs/` is a static site (GitHub Pages ready) that replays the same day in the browser: play/pause,
-a timeline to scrub through the day, a multi-select line filter with RATP / IDFM line badges, and a
-pan/zoom map kept to the area the network covers. Buses are drawn with [deck.gl](https://deck.gl) over
-[MapLibre](https://maplibre.org) and a CARTO dark basemap.
+`docs/` is a static site (published with GitHub Pages) that replays the same day in the browser: play/pause,
+a timeline to scrub through the day, a multi-select line filter with RATP / IDFM line badges, a bus stop
+filter that keeps only the lines serving the chosen stops, a show/hide stops button, and a pan/zoom map
+kept to the area the network covers. Buses are drawn with [deck.gl](https://deck.gl) over
+[MapLibre](https://maplibre.org), on a dark basemap styled from [OpenFreeMap](https://openfreemap.org)'s
+keyless vector tiles.
 
-Its data comes from `build_web_data.py`, which writes `docs/fleet/` (about 3.3 MB gzipped): each trip is
+Its data comes from `build_web_data.py`, which writes `docs/fleet/` (about 3.5 MB gzipped): the stops with the
+lines serving them, and the trips. Each trip is
 a start time plus a timing profile along a route pattern, and the browser interpolates positions
 every frame.
 

@@ -46,13 +46,22 @@
   }
 
   async function loadFleet() {
+    const stopsReq = fetch("fleet/stops.json").then((r) => r.json());
     const meta = await (await fetch("fleet/fleet.json")).json();
     const gz = await fetchWithProgress("fleet/fleet.bin.gz", (p) => ($("progress").style.width = `${p * 90}%`));
     $("loading-text").textContent = "Preparing 90,000 trips";
     const buf = await gunzip(gz);
     const A = {};
     for (const a of meta.arrays) A[a.name] = new TYPES[a.dtype](buf, a.offset, a.length);
-    return prepare(meta, A);
+    const F = prepare(meta, A);
+    F.stops = prepareStops(await stopsReq, F.lines);
+    return F;
+  }
+
+  function prepareStops(S, lines) {
+    const n = S.name.length;
+    const networks = S.lines.map((ls) => [...new Set(ls.map((i) => lines[i].network).filter(Boolean))]);
+    return { n, name: S.name, lonlat: Float32Array.from(S.lonlat), lines: S.lines, networks, folded: S.name.map(fold) };
   }
 
   function prepare(meta, A) {
@@ -318,7 +327,10 @@
       t: START_AT,
       target: START_AT,
       playing: false,
-      selected: new Set(),
+      selected: new Set(), // lines picked in the line filter
+      stopSel: new Set(), // stops picked in the stop filter
+      showStops: false,
+      filtered: false,
       visible: new Uint8Array(lines.length).fill(1),
       frame: null,
       dirty: true,
@@ -342,7 +354,7 @@
     const networkColor = (p) => {
       const r = A.pat_route[p];
       const c = F.glow.subarray(3 * r, 3 * r + 3);
-      const a = state.selected.size === 0 ? 30 : state.visible[r] ? 130 : 5;
+      const a = !state.filtered ? 30 : state.visible[r] ? 130 : 5;
       return [c[0], c[1], c[2], a];
     };
 
@@ -350,9 +362,24 @@
       interleaved: true,
       layers: [],
       getTooltip: tooltip,
+      getCursor: ({ isHovering }) => (isHovering ? "pointer" : "grab"),
+      onClick: (info) => {
+        if (info.layer && (info.layer.id === "stops" || info.layer.id === "picked-stops")) toggleStop(info.object);
+      },
     });
     await styleReady;
     map.addControl(overlay);
+
+    const ST = F.stops;
+    const allStops = Array.from({ length: ST.n }, (_, i) => i);
+    let stopCache = { version: -1, data: allStops };
+    function stopData() {
+      if (stopCache.version !== state.selectionVersion) {
+        const data = state.filtered ? allStops.filter((i) => ST.lines[i].some((r) => state.visible[r])) : allStops;
+        stopCache = { version: state.selectionVersion, data };
+      }
+      return stopCache.data;
+    }
 
     function zoomScale() {
       const z = map.getZoom();
@@ -366,7 +393,7 @@
       }
       const fr = state.frame;
       const s = zoomScale();
-      const filtered = state.selected.size > 0;
+      const filtered = state.filtered;
       overlay.setProps({
         layers: [
           new deck.PathLayer({
@@ -383,8 +410,28 @@
             pickable: true,
             autoHighlight: true,
             highlightColor: [255, 255, 255, 90],
-            updateTriggers: { getColor: [state.selected.size, state.selectionVersion], getWidth: [state.selectionVersion] },
+            updateTriggers: { getColor: [state.selectionVersion], getWidth: [state.selectionVersion] },
             parameters: ADDITIVE,
+          }),
+          new deck.ScatterplotLayer({
+            id: "stops",
+            data: stopData(),
+            beforeId: "labels",
+            visible: state.showStops,
+            getPosition: (i) => [ST.lonlat[2 * i], ST.lonlat[2 * i + 1]],
+            radiusUnits: "pixels",
+            getRadius: 1,
+            radiusScale: Math.max(1.6, 2.1 * s),
+            stroked: true,
+            filled: true,
+            getFillColor: [12, 13, 18, 255],
+            getLineColor: [230, 232, 238, 170],
+            lineWidthUnits: "pixels",
+            getLineWidth: 1,
+            lineWidthScale: Math.max(0.8, 0.7 * s),
+            pickable: true,
+            autoHighlight: true,
+            highlightColor: [255, 255, 255, 255],
           }),
           new deck.TripsLayer({
             id: "trails",
@@ -426,14 +473,39 @@
             pickable: true,
             parameters: ADDITIVE,
           }),
+          new deck.ScatterplotLayer({
+            id: "picked-stops",
+            data: [...state.stopSel],
+            beforeId: "labels",
+            getPosition: (i) => [ST.lonlat[2 * i], ST.lonlat[2 * i + 1]],
+            radiusUnits: "pixels",
+            getRadius: 1,
+            radiusScale: 6 + 1.5 * s,
+            stroked: true,
+            filled: true,
+            getFillColor: [12, 13, 18, 230],
+            getLineColor: [255, 255, 255, 255],
+            lineWidthUnits: "pixels",
+            getLineWidth: 2.5,
+            pickable: true,
+          }),
         ],
       });
       $("count").textContent = fr.count.toLocaleString("en-GB");
       $("clock").textContent = clock(state.t);
     }
 
+    const TIP_STYLE = { background: "rgba(16,18,26,.94)", color: "#eef0f4", borderRadius: "8px", padding: "8px 10px", fontSize: "13px", border: "1px solid rgba(255,255,255,.09)" };
     function tooltip(info) {
       if (!info.layer || info.index < 0) return null;
+      if (info.layer.id === "stops" || info.layer.id === "picked-stops") {
+        const i = info.object;
+        const ls = ST.lines[i].filter((r) => !state.filtered || state.visible[r] || state.stopSel.has(i));
+        return {
+          html: `<div class="tip-stop"><b>${esc(ST.name[i])}</b>${lineBadges(ls, 12)}<small>${state.stopSel.has(i) ? "Click to remove from the filter" : "Click to show only the lines stopping here"}</small></div>`,
+          style: TIP_STYLE,
+        };
+      }
       let r;
       if (info.layer.id === "heads") r = state.frame && state.frame.headRoute[info.index];
       else if (info.layer.id === "network") r = A.pat_route[info.object];
@@ -441,7 +513,7 @@
       const l = lines[r];
       return {
         html: `<div class="tip">${badge(l)}<div>${esc(l.long || `Bus ${l.name}`)}<small>${esc(l.network)}</small></div></div>`,
-        style: { background: "rgba(16,18,26,.94)", color: "#eef0f4", borderRadius: "8px", padding: "8px 10px", fontSize: "13px", border: "1px solid rgba(255,255,255,.09)" },
+        style: TIP_STYLE,
       };
     }
 
@@ -478,7 +550,7 @@
       const g = canvas.getContext("2d");
       g.scale(dpr, dpr);
       const max = Math.max(...meta.activity.counts, 1);
-      const scaleMax = state.selected.size ? Math.max(...activity, 1) : max;
+      const scaleMax = state.filtered ? Math.max(...activity, 1) : max;
       g.beginPath();
       g.moveTo(0, h - 12);
       activity.forEach((c, i) => g.lineTo((i / (activity.length - 1)) * w, h - 12 - (c / scaleMax) * (h - 16)));
@@ -491,7 +563,7 @@
       g.fill();
     }
     function computeActivity() {
-      if (!state.selected.size) return (activity = meta.activity.counts);
+      if (!state.filtered) return (activity = meta.activity.counts);
       const step = meta.activity.step, n = meta.activity.counts.length;
       const diff = new Int32Array(n + 1);
       for (let i = 0; i < F.N; i++) {
@@ -546,18 +618,25 @@
     const optionEls = [...options.querySelectorAll(".option")];
     const groupEls = [...options.querySelectorAll(".group")];
 
-    function openDropdown(open) {
-      dropdown.hidden = !open;
-      filter.classList.toggle("open", open);
-      $("filter-toggle").setAttribute("aria-expanded", open);
-      if (open && innerWidth > 760) search.focus();
+    const panels = [
+      { root: filter, dropdown, toggle: $("filter-toggle"), search },
+      { root: $("stop-filter"), dropdown: $("stop-dropdown"), toggle: $("stop-toggle"), search: $("stop-search") },
+    ];
+    function openDropdown(panel, open) {
+      for (const p of panels) {
+        const on = p === panel && open;
+        p.dropdown.hidden = !on;
+        p.root.classList.toggle("open", on);
+        p.toggle.setAttribute("aria-expanded", on);
+      }
+      if (open && innerWidth > 760) panel.search.focus();
     }
-    $("filter-toggle").addEventListener("click", () => openDropdown(dropdown.hidden));
+    for (const p of panels) p.toggle.addEventListener("click", () => openDropdown(p, p.dropdown.hidden));
     document.addEventListener("pointerdown", (e) => {
-      if (!dropdown.hidden && !filter.contains(e.target)) openDropdown(false);
+      for (const p of panels) if (!p.dropdown.hidden && !p.root.contains(e.target)) openDropdown(p, false);
     });
     addEventListener("keydown", (e) => {
-      if (e.key === "Escape" && !dropdown.hidden) openDropdown(false);
+      if (e.key === "Escape") for (const p of panels) if (!p.dropdown.hidden) openDropdown(p, false);
     });
 
     search.addEventListener("input", () => {
@@ -600,8 +679,11 @@
     function selectionChanged() {
       state.selectionVersion++;
       const sel = state.selected;
-      state.visible.fill(sel.size ? 0 : 1);
-      for (const i of sel) state.visible[i] = 1;
+      // a line shows when it passes both filters: picked (or no line picked) and serving a picked stop (or no stop picked)
+      const viaStops = new Uint8Array(lines.length).fill(state.stopSel.size ? 0 : 1);
+      for (const i of state.stopSel) for (const r of ST.lines[i]) viaStops[r] = 1;
+      for (let r = 0; r < lines.length; r++) state.visible[r] = (!sel.size || sel.has(r)) && viaStops[r] ? 1 : 0;
+      state.filtered = sel.size > 0 || state.stopSel.size > 0;
       for (const el of optionEls) el.setAttribute("aria-selected", sel.has(+el.dataset.line));
       $("selection-count").textContent = sel.size ? `${sel.size} selected` : "";
       const v = $("filter-value");
@@ -613,9 +695,10 @@
       computeActivity();
       drawActivity();
       state.dirty = true;
-      if (sel.size) {
+      if (state.filtered) {
         const b = [180, 90, -180, -90];
-        for (const i of sel) {
+        for (let i = 0; i < lines.length; i++) {
+          if (!state.visible[i]) continue;
           const lb = F.lineBox[i];
           b[0] = Math.min(b[0], lb[0]); b[1] = Math.min(b[1], lb[1]);
           b[2] = Math.max(b[2], lb[2]); b[3] = Math.max(b[3], lb[3]);
@@ -623,6 +706,76 @@
         if (b[0] < b[2]) map.fitBounds([[b[0], b[1]], [b[2], b[3]]], { padding: FIT_PADDING(), maxZoom: 14.5, duration: 900 });
       }
     }
+
+    // ------------------------------------------------ stop filter
+    const stopOptions = $("stop-options"), stopSearch = $("stop-search");
+    const MAX_RESULTS = 80;
+    function lineBadges(ids, max) {
+      const sorted = [...ids].sort((a, b) => lineRank[a] - lineRank[b]);
+      return `<span class="badges">${sorted.slice(0, max).map((r) => badge(lines[r], "small")).join("")}${sorted.length > max ? `<span class="more">+${sorted.length - max}</span>` : ""}</span>`;
+    }
+    const lineRank = new Int32Array(lines.length);
+    meta.line_order.forEach((r, k) => (lineRank[r] = k));
+    function stopRow(i) {
+      return `<button class="option stop-row" role="option" aria-selected="${state.stopSel.has(i)}" data-stop="${i}">` +
+        `<span class="check">${CHECK}</span><span class="stop-name"><b>${esc(ST.name[i])}</b><small>${esc(ST.networks[i].slice(0, 2).join(" · "))}</small></span>${lineBadges(ST.lines[i], 4)}</button>`;
+    }
+    function renderStopOptions() {
+      const q = fold(stopSearch.value.trim());
+      let html = "";
+      const picked = [...state.stopSel];
+      if (picked.length) html += `<div class="group">Selected</div>${picked.map(stopRow).join("")}`;
+      if (!q) {
+        html += `<div class="empty">Type a stop name, or click a stop on the map.</div>`;
+      } else {
+        const starts = [], contains = [];
+        for (let i = 0; i < ST.n && starts.length < MAX_RESULTS; i++) {
+          if (state.stopSel.has(i)) continue;
+          const f = ST.folded[i];
+          if (f.startsWith(q)) starts.push(i);
+          else if (contains.length < MAX_RESULTS && f.includes(q)) contains.push(i);
+        }
+        const hits = starts.concat(contains).slice(0, MAX_RESULTS);
+        html += hits.length
+          ? `<div class="group">Stops</div>${hits.map(stopRow).join("")}`
+          : `<div class="empty">No stop matches “${esc(stopSearch.value.trim())}”</div>`;
+      }
+      stopOptions.innerHTML = html;
+    }
+    stopSearch.addEventListener("input", renderStopOptions);
+    stopOptions.addEventListener("click", (e) => {
+      const opt = e.target.closest(".option");
+      if (opt) toggleStop(+opt.dataset.stop);
+    });
+    $("stop-clear").addEventListener("click", () => {
+      state.stopSel.clear();
+      stopsChanged();
+    });
+    function toggleStop(i) {
+      state.stopSel.has(i) ? state.stopSel.delete(i) : state.stopSel.add(i);
+      stopsChanged();
+    }
+    function stopsChanged() {
+      const n = state.stopSel.size;
+      const v = $("stop-value");
+      if (!n) v.textContent = "Any stop";
+      else {
+        const names = [...state.stopSel].map((i) => ST.name[i]);
+        v.innerHTML = `<span class="chip">${esc(names[0])}</span>` + (n > 1 ? `<span class="more">+${n - 1}</span>` : "");
+      }
+      $("stop-count").textContent = n ? `${n} selected` : "";
+      renderStopOptions();
+      selectionChanged();
+    }
+    renderStopOptions();
+
+    const showStops = $("show-stops");
+    showStops.addEventListener("click", () => {
+      state.showStops = !state.showStops;
+      showStops.setAttribute("aria-pressed", state.showStops);
+      $("show-stops-label").textContent = state.showStops ? "Hide stops" : "Show stops";
+      state.zoomDirty = true;
+    });
 
     // ------------------------------------------------ loop
     map.on("zoom", () => (state.zoomDirty = true));
@@ -662,26 +815,51 @@
     window.__app = { state, map, setPlaying, build }; // handy from the console
   }
 
+  // Dark basemap drawn from OpenFreeMap's keyless vector tiles (OpenMapTiles schema).
   function baseStyle() {
-    const tiles = (layer) => ["a", "b", "c", "d"].map((s) => `https://${s}.basemaps.cartocdn.com/${layer}/{z}/{x}/{y}@2x.png`);
+    const name = ["coalesce", ["get", "name:fr"], ["get", "name"]];
+    const roadWidth = (base) => ["interpolate", ["exponential", 1.6], ["zoom"], 9, base * 0.3, 13, base, 17, base * 6];
     return {
       version: 8,
+      glyphs: "https://tiles.openfreemap.org/fonts/{fontstack}/{range}.pbf",
       sources: {
-        base: {
-          type: "raster",
-          tiles: tiles("dark_nolabels"),
-          tileSize: 256,
-          maxzoom: 20,
-          attribution: '© <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">OpenStreetMap</a> contributors © <a href="https://carto.com/attributions" target="_blank" rel="noopener">CARTO</a>',
+        omt: {
+          type: "vector",
+          url: "https://tiles.openfreemap.org/planet",
+          attribution: '<a href="https://openfreemap.org" target="_blank" rel="noopener">OpenFreeMap</a> © <a href="https://www.openmaptiles.org/" target="_blank" rel="noopener">OpenMapTiles</a> © <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">OpenStreetMap</a> contributors',
         },
-        labels: { type: "raster", tiles: tiles("dark_only_labels"), tileSize: 256, maxzoom: 20 },
         departments: { type: "geojson", data: "geo/departments.geojson" },
       },
       layers: [
         { id: "background", type: "background", paint: { "background-color": "#07080c" } },
-        { id: "base", type: "raster", source: "base", paint: { "raster-opacity": 0.75, "raster-brightness-max": 0.85 } },
+        { id: "park", type: "fill", source: "omt", "source-layer": "park", paint: { "fill-color": "#0b110e", "fill-opacity": 0.8 } },
+        { id: "wood", type: "fill", source: "omt", "source-layer": "landcover", filter: ["in", ["get", "class"], ["literal", ["wood", "grass"]]], paint: { "fill-color": "#0a0f0c", "fill-opacity": 0.7 } },
+        { id: "water", type: "fill", source: "omt", "source-layer": "water", paint: { "fill-color": "#0d1522" } },
+        { id: "waterway", type: "line", source: "omt", "source-layer": "waterway", minzoom: 11, paint: { "line-color": "#0d1522", "line-width": 1.2 } },
+        { id: "building", type: "fill", source: "omt", "source-layer": "building", minzoom: 14, paint: { "fill-color": "#101218", "fill-opacity": ["interpolate", ["linear"], ["zoom"], 14, 0, 15, 0.9] } },
+        { id: "rail", type: "line", source: "omt", "source-layer": "transportation", filter: ["==", ["get", "class"], "rail"], minzoom: 11, paint: { "line-color": "#1b1d24", "line-width": 1, "line-dasharray": [3, 2] } },
+        { id: "road-minor", type: "line", source: "omt", "source-layer": "transportation", minzoom: 12, filter: ["in", ["get", "class"], ["literal", ["minor", "service", "tertiary"]]], layout: { "line-cap": "round", "line-join": "round" }, paint: { "line-color": "#16181e", "line-width": roadWidth(0.8) } },
+        { id: "road-major", type: "line", source: "omt", "source-layer": "transportation", filter: ["in", ["get", "class"], ["literal", ["primary", "secondary", "trunk"]]], layout: { "line-cap": "round", "line-join": "round" }, paint: { "line-color": "#1d2027", "line-width": roadWidth(1.2) } },
+        { id: "road-motorway", type: "line", source: "omt", "source-layer": "transportation", filter: ["==", ["get", "class"], "motorway"], layout: { "line-cap": "round", "line-join": "round" }, paint: { "line-color": "#24272f", "line-width": roadWidth(1.5) } },
         { id: "departments", type: "line", source: "departments", paint: { "line-color": "#ffffff", "line-opacity": 0.14, "line-width": 1, "line-dasharray": [3, 2] } },
-        { id: "labels", type: "raster", source: "labels", paint: { "raster-opacity": ["interpolate", ["linear"], ["zoom"], 9, 0.45, 13, 0.8] } },
+        // buses are drawn just below this layer, so labels stay readable
+        {
+          id: "labels", type: "symbol", source: "omt", "source-layer": "transportation_name", minzoom: 14,
+          layout: { "symbol-placement": "line", "text-field": name, "text-font": ["Noto Sans Regular"], "text-size": 11 },
+          paint: { "text-color": "#6c7280", "text-halo-color": "#07080c", "text-halo-width": 1.4 },
+        },
+        {
+          id: "place-minor", type: "symbol", source: "omt", "source-layer": "place", minzoom: 11,
+          filter: ["in", ["get", "class"], ["literal", ["suburb", "quarter", "neighbourhood", "village"]]],
+          layout: { "text-field": name, "text-font": ["Noto Sans Regular"], "text-size": ["interpolate", ["linear"], ["zoom"], 11, 10, 15, 13], "text-transform": "uppercase", "text-letter-spacing": 0.08 },
+          paint: { "text-color": "#7d8391", "text-halo-color": "#07080c", "text-halo-width": 1.5 },
+        },
+        {
+          id: "place-town", type: "symbol", source: "omt", "source-layer": "place",
+          filter: ["in", ["get", "class"], ["literal", ["city", "town"]]],
+          layout: { "text-field": name, "text-font": ["Noto Sans Bold"], "text-size": ["interpolate", ["linear"], ["zoom"], 8, 11, 14, 16] },
+          paint: { "text-color": "#a3a9b5", "text-halo-color": "#07080c", "text-halo-width": 1.6 },
+        },
       ],
     };
   }

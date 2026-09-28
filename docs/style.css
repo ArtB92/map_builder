@@ -54,8 +54,25 @@ button { font: inherit; color: inherit; background: none; border: 0; cursor: poi
 .brand h1 { margin: 0; font-size: 20px; font-weight: 700; letter-spacing: 0.01em; }
 .brand p { margin: 2px 0 0; font-size: 13px; color: var(--muted); }
 
-/* line filter */
-.filter { top: 16px; right: 16px; width: 390px; max-width: calc(100vw - 32px); }
+/* filters */
+.controls { position: absolute; z-index: 3; top: 16px; right: 16px; width: 390px; max-width: calc(100vw - 32px); display: flex; flex-direction: column; align-items: flex-end; gap: 8px; }
+.controls .panel { position: relative; z-index: 1; }
+.controls .filter.open { z-index: 5; }
+.filter { width: 100%; }
+.filter .dropdown { position: absolute; left: -1px; right: -1px; top: 100%; background: var(--panel-solid); border: 1px solid var(--line); border-radius: 0 0 var(--radius) var(--radius); box-shadow: 0 16px 30px rgba(0, 0, 0, 0.45); }
+.filter.open { border-radius: var(--radius) var(--radius) 0 0; }
+.stop-row .stop-name { flex: 1; min-width: 0; }
+.stop-row .stop-name b { display: block; font-weight: 500; font-size: 14px; color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.stop-row .stop-name small { display: block; font-size: 12px; color: var(--dim); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.stop-row .badges { display: flex; flex-wrap: wrap; gap: 3px; justify-content: flex-end; max-width: 150px; }
+.stop-row .badges .more { font-size: 11px; color: var(--muted); align-self: center; }
+.filter-value .chip { display: inline-block; max-width: 100%; padding: 2px 8px; border-radius: 999px; background: rgba(255, 255, 255, 0.1); font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.stops-button { display: inline-flex; align-items: center; gap: 9px; padding: 9px 14px; border-radius: 999px; font-size: 14px; font-weight: 500; }
+.stops-button:hover { background: rgba(28, 31, 42, 0.92); }
+.stops-button:focus-visible { outline: 2px solid #fff; outline-offset: 2px; }
+.stop-dot { width: 12px; height: 12px; border-radius: 50%; border: 2px solid var(--muted); background: var(--bg); }
+.stops-button[aria-pressed="true"] .stop-dot { border-color: #fff; box-shadow: 0 0 0 3px rgba(255, 255, 255, 0.18); }
+.stops-button[aria-pressed="true"] { color: #fff; }
 .filter-toggle { width: 100%; display: flex; align-items: center; gap: 10px; padding: 12px 14px; min-height: 52px; border-radius: var(--radius); text-align: left; }
 .filter-toggle:hover { background: var(--hover); }
 .filter-toggle:focus-visible, .play:focus-visible, .option:focus-visible, .link:focus-visible { outline: 2px solid #fff; outline-offset: 2px; }
@@ -116,6 +133,11 @@ button { font: inherit; color: inherit; background: none; border: 0; cursor: poi
 .tip { display: flex; align-items: center; gap: 8px; }
 .tip small { display: block; color: var(--muted); font-size: 12px; }
 .tip div { max-width: 260px; }
+.tip-stop { max-width: 280px; }
+.tip-stop b { display: block; font-size: 14px; font-weight: 500; margin-bottom: 6px; }
+.tip-stop .badges { display: flex; flex-wrap: wrap; gap: 3px; }
+.tip-stop .badges .more { font-size: 11px; color: var(--muted); align-self: center; }
+.tip-stop small { display: block; margin-top: 6px; color: var(--muted); font-size: 11.5px; }
 
 .maplibregl-ctrl-group { background: var(--panel) !important; border: 1px solid var(--line); box-shadow: none !important; }
 .maplibregl-ctrl-group button + button { border-top-color: var(--line) !important; }
@@ -135,8 +157,10 @@ button { font: inherit; color: inherit; background: none; border: 0; cursor: poi
   .brand { top: 12px; left: 12px; right: 12px; padding: 8px 12px 8px 8px; }
   .brand .picto { width: 34px; height: 34px; font-size: 11px; }
   .brand h1 { font-size: 17px; }
-  .brand p { font-size: 12px; }
-  .filter { top: 76px; left: 12px; right: 12px; width: auto; max-width: none; }
+  .brand p { font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .brand > div { min-width: 0; }
+  .controls { top: 76px; left: 12px; right: 12px; width: auto; max-width: none; gap: 6px; }
+  .filter-toggle { min-height: 44px; padding: 8px 12px; }
   .options { max-height: 44vh; }
   .player { left: 12px; right: 12px; bottom: 16px; gap: 12px; padding: 10px 14px 8px 10px; flex-wrap: wrap; }
   .play { width: 44px; height: 44px; }
@@ -144,5 +168,5 @@ button { font: inherit; color: inherit; background: none; border: 0; cursor: poi
   .clock { font-size: 28px; }
   .timeline { flex-basis: 100%; }
   .maplibregl-ctrl-bottom-right { bottom: 150px; }
-  .maplibregl-ctrl-top-right { top: 136px; }
+  .stops-button { padding: 7px 12px; font-size: 13px; }
 }

@@ -82,6 +82,27 @@ def route_termini(feed: Feed, route_ids: set) -> dict:
     return out
 
 
+def export_stops(feed: Feed, day, route_index: dict) -> dict:
+    """Bus stops of the day, merged by stop area and name, with the lines serving each."""
+    info = feed.read("stops.txt", usecols=lambda c: c in ("stop_id", "stop_name", "parent_station"))
+    if "parent_station" not in info.columns:
+        info["parent_station"] = None
+    st = day.stops.merge(info, on="stop_id", how="left")
+    st["stop_name"] = st["stop_name"].fillna("").str.strip()
+    st["key"] = st["parent_station"].fillna(st["stop_id"]) + "|" + st["stop_name"]
+    served = day.stop_times[["trip_id", "stop_id"]].drop_duplicates().merge(day.trips[["trip_id", "route_id"]], on="trip_id")
+    served = served[["stop_id", "route_id"]].drop_duplicates().merge(st[["stop_id", "key"]], on="stop_id")
+    served["line"] = served["route_id"].map(route_index)
+    lines_of = served.dropna(subset=["line"]).groupby("key")["line"].agg(lambda s: sorted({int(x) for x in s}))
+    groups = st.groupby("key").agg(name=("stop_name", "first"), lon=("lon", "mean"), lat=("lat", "mean"))
+    groups = groups.join(lines_of.rename("lines"), how="inner").sort_values("name", kind="stable")
+    return dict(
+        name=groups["name"].tolist(),
+        lonlat=[round(float(v), 5) for xy in zip(groups["lon"], groups["lat"]) for v in xy],
+        lines=groups["lines"].tolist(),
+    )
+
+
 def natural_key(name: str):
     digits = "".join(c for c in name if c.isdigit())
     return (0 if name.isdigit() else 1, int(digits) if digits else 0, name)
@@ -101,6 +122,7 @@ def main():
     feed = Feed(a.gtfs)
     if a.cache and os.path.exists(a.cache):
         date, fleet = pickle.load(open(a.cache, "rb"))
+        day = load_bus_day(feed, date, BBOX)  # stops are not in the cache
     else:
         date = pick_service_date(feed, a.weekday, a.date)
         day = load_bus_day(feed, date, BBOX)
@@ -236,8 +258,11 @@ def main():
     )
     with open(os.path.join(a.out, "fleet.json"), "w") as f:
         json.dump(meta, f, ensure_ascii=False, separators=(",", ":"))
+    stops = export_stops(feed, day, {rid: i for i, rid in enumerate(routes["route_id"])})
+    with open(os.path.join(a.out, "stops.json"), "w") as f:
+        json.dump(stops, f, ensure_ascii=False, separators=(",", ":"))
     print(
-        f"{len(trip_start):,} trips, {len(prof_pat):,} profiles ({len(dt):,} knots), {len(used):,} patterns "
+        f"{len(stops['name']):,} stops, {len(trip_start):,} trips, {len(prof_pat):,} profiles ({len(dt):,} knots), {len(used):,} patterns "
         f"({len(lonlat):,} vertices), {offset / 1e6:.1f} MB [{time.time() - t0:.0f}s]"
     )
 
