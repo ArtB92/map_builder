@@ -67,8 +67,8 @@ class Style:
     map_px: tuple[float, float] = (1255, 545)
     metres_per_px: float = 37.0
     trail_sim_seconds: float = 150.0  # how long a trail stays visible (simulated time)
-    trail_gain: float = 0.8
-    glow: float = 1.1
+    trail_gain: float = 0.7
+    glow: float = 0.55
     substeps: int = 4
     mode: str = "lines"  # "lines" or "speed"
     title: str = "PARIS"
@@ -205,7 +205,7 @@ class Scene:
             bins = np.clip((speed / 2).astype(int), 0, 25)  # 2 km/h buckets
             keys = bins
             key_rgb = lambda k: speed_rgb(np.array(k * 2 + 1.0))  # noqa: E731
-            head_rgb = lambda k: 0.45 * speed_rgb(np.array(k * 2 + 1.0)) + 0.55  # noqa: E731
+            head_rgb = lambda k: 0.8 * speed_rgb(np.array(k * 2 + 1.0)) + 0.2  # noqa: E731
         else:
             keys = self.route_color_id[self.fleet.trip_route[trips]]
             key_rgb = lambda k: self.color_table[k]  # noqa: E731
