@@ -78,7 +78,6 @@ class Fleet:
     # knots: (time, distance) per trip, concatenated (trip i keys at i*TRIP_STRIDE + t)
     knot_key: np.ndarray
     knot_d: np.ndarray  # global shape distance (includes the shape offset)
-    knot_speed: np.ndarray  # km/h over the interval starting at this knot
     # per trip
     trip_start: np.ndarray
     trip_end: np.ndarray
@@ -111,12 +110,8 @@ class Fleet:
             self.shape_y[j + 1] - self.shape_y[j]
         )
 
-    def speed(self, trips: np.ndarray, t: float) -> np.ndarray:
-        tt = np.clip(np.full(len(trips), t), self.trip_start[trips], self.trip_end[trips])
-        return self.knot_speed[self._knot_index(trips, tt)]
 
-
-def build_fleet(day: BusDay, proj: Projection, min_dwell: float = 20.0, speed_window_m: float = 400.0) -> Fleet:
+def build_fleet(day: BusDay, proj: Projection, min_dwell: float = 20.0) -> Fleet:
     stops = day.stops.set_index("stop_id")
     st = day.stop_times
     trips = day.trips.set_index("trip_id")
@@ -136,7 +131,7 @@ def build_fleet(day: BusDay, proj: Projection, min_dwell: float = 20.0, speed_wi
     pat_line: list[np.ndarray] = []
     pat_stop_d: list[np.ndarray] = []
 
-    knot_t, knot_d, knot_v = [], [], []
+    knot_t, knot_d = [], []
     t_start, t_end, t_route, k0, k1 = [], [], [], [], []
     n_knots = 0
 
@@ -182,16 +177,9 @@ def build_fleet(day: BusDay, proj: Projection, min_dwell: float = 20.0, speed_wi
                 dd.append(sd[i])
         tt = np.maximum.accumulate(np.array(tt))
         dd = np.array(dd)
-        # speed: distance over time, smoothed over a window so rounding noise doesn't dominate
-        lo = np.searchsorted(dd, dd[:-1] - speed_window_m / 2, side="left")
-        hi = np.maximum(np.searchsorted(dd, dd[1:] + speed_window_m / 2, side="right") - 1, np.arange(1, len(dd)))
-        span_t = tt[hi] - tt[lo]
-        v = np.where(span_t > 0, 3.6 * (dd[hi] - dd[lo]) / np.maximum(span_t, 1e-6), 0.0)
-        v = np.append(np.where(dd[1:] == dd[:-1], 0.0, v), 0.0)  # zero while dwelling
         trip_no = len(t_start)
         knot_t.append(tt + trip_no * TRIP_STRIDE)
         knot_d.append(dd + p * SHAPE_STRIDE)
-        knot_v.append(np.clip(v, 0, 90))
         t_start.append(tt[0])
         t_end.append(tt[-1])
         t_route.append(route_idx[trips.at[trip_id, "route_id"]])
@@ -214,7 +202,6 @@ def build_fleet(day: BusDay, proj: Projection, min_dwell: float = 20.0, speed_wi
         shape_y=lines_xy[:, 1],
         knot_key=np.concatenate(knot_t),
         knot_d=np.concatenate(knot_d),
-        knot_speed=np.concatenate(knot_v),
         trip_start=np.array(t_start),
         trip_end=np.array(t_end),
         trip_route=np.array(t_route),

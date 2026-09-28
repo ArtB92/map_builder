@@ -18,23 +18,6 @@ from .overlay import Overlay
 
 SUB = 16  # cv2 sub-pixel precision (shift=4)
 
-# speed colour ramp (km/h -> RGB), slow is hot, fast is cool
-SPEED_STOPS = [
-    (0, (1.00, 0.18, 0.28)),
-    (8, (1.00, 0.45, 0.20)),
-    (14, (1.00, 0.80, 0.25)),
-    (20, (0.55, 1.00, 0.45)),
-    (28, (0.25, 0.90, 1.00)),
-    (40, (0.55, 0.60, 1.00)),
-]
-SPEED_BINS = [(0, 8, "Under 8 km/h"), (8, 14, "8 to 14 km/h"), (14, 20, "14 to 20 km/h"), (20, 28, "20 to 28 km/h"), (28, 999, "Over 28 km/h")]
-
-
-def speed_rgb(v: np.ndarray) -> np.ndarray:
-    xs = [s for s, _ in SPEED_STOPS]
-    return np.stack([np.interp(v, xs, [c[i] for _, c in SPEED_STOPS]) for i in range(3)], axis=-1)
-
-
 def _hex_rgb(h: str) -> tuple[float, float, float] | None:
     h = (h or "").strip().lstrip("#")
     if len(h) != 6:
@@ -70,7 +53,6 @@ class Style:
     trail_gain: float = 0.7
     glow: float = 0.55
     substeps: int = 4
-    mode: str = "lines"  # "lines" or "speed"
     title: str = "PARIS"
     subtitle: str = "EVERY BUS ON A TYPICAL TUESDAY"
     date_label: str = ""
@@ -194,22 +176,14 @@ class Scene:
             px, py = self.to_px(*f.xy(f.distance(trips, np.full(len(trips), tt))))
             pts.append(np.column_stack([px, py]))
         path = np.stack(pts, axis=1)  # trips x steps x 2
-        return trips, path, f.speed(trips, t)
+        return trips, path
 
-    def draw(self, trips, path, speed, trail: np.ndarray) -> np.ndarray:
+    def draw(self, trips, path, trail: np.ndarray) -> np.ndarray:
         W, H = self.W, self.H
         head_u8 = np.zeros((H, W, 3), np.uint8)
         new_u8 = np.zeros((H, W, 3), np.uint8)
         ipath = np.round(path * SUB).astype(np.int32)
-        if self.s.mode == "speed":
-            bins = np.clip((speed / 2).astype(int), 0, 25)  # 2 km/h buckets
-            keys = bins
-            key_rgb = lambda k: speed_rgb(np.array(k * 2 + 1.0))  # noqa: E731
-            head_rgb = lambda k: 0.8 * speed_rgb(np.array(k * 2 + 1.0)) + 0.2  # noqa: E731
-        else:
-            keys = self.route_color_id[self.fleet.trip_route[trips]]
-            key_rgb = lambda k: self.color_table[k]  # noqa: E731
-            head_rgb = lambda k: 0.8 * self.color_table[k] + 0.2  # noqa: E731
+        keys = self.route_color_id[self.fleet.trip_route[trips]]
         order = np.argsort(keys, kind="stable")
         ks = keys[order]
         cuts = np.flatnonzero(np.diff(ks)) + 1
@@ -217,10 +191,10 @@ class Scene:
             if len(grp) == 0:
                 continue
             k = keys[grp[0]]
-            c = tuple(float(v) * 255 for v in key_rgb(k))
+            c = tuple(float(v) * 255 for v in self.color_table[k])
             cv2.polylines(new_u8, list(ipath[grp]), False, c, 1, cv2.LINE_AA, shift=4)
             heads = [np.repeat(ipath[g, -1:], 2, axis=0) for g in grp]
-            cv2.polylines(head_u8, heads, False, tuple(float(v) * 255 for v in head_rgb(k)), 4, cv2.LINE_AA, shift=4)
+            cv2.polylines(head_u8, heads, False, tuple(float(v) * 255 for v in 0.8 * self.color_table[k] + 0.2), 4, cv2.LINE_AA, shift=4)
         new = new_u8.astype(np.float32) / 255
         np.multiply(trail, self.decay, out=trail)
         np.maximum(trail, new, out=trail)
@@ -236,25 +210,21 @@ class Scene:
         dyn = 1.0 - np.exp(-dyn * 1.2)
         return 1.0 - (1.0 - self.background) * (1.0 - dyn)
 
-    def stats(self, trips, speed) -> dict:
+    def stats(self, trips) -> dict:
         routes = self.fleet.trip_route[trips]
         counts = np.bincount(routes, minlength=len(self.route_names))
         top = np.argsort(-counts, kind="stable")[:5]
-        spd = [int(np.count_nonzero((speed >= lo) & (speed < hi))) for lo, hi, _ in SPEED_BINS]
-        moving = speed[speed > 0]
         return {
             "buses": len(trips),
             "lines": int(np.count_nonzero(counts)),
             "top": [(self.route_names[i], int(counts[i]), self.route_rgb[i]) for i in top if counts[i] > 0],
-            "speed_bins": spd,
-            "avg_speed": float(moving.mean()) if len(moving) else 0.0,
         }
 
     def render_frame(self, i: int, trail: np.ndarray) -> np.ndarray:
         t = self.s.frame_time(i)
-        trips, path, speed = self.bus_state(t)
-        img = self.draw(trips, path, speed, trail)
-        img = self.overlay.compose(img, t, i, self.stats(trips, speed))
+        trips, path = self.bus_state(t)
+        img = self.draw(trips, path, trail)
+        img = self.overlay.compose(img, t, i, self.stats(trips))
         return (np.clip(img, 0, 1) * 255 + 0.5).astype(np.uint8)
 
 
