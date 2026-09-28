@@ -1,7 +1,6 @@
 """Render an animated map of every Paris bus on one weekday from an IDFM GTFS feed.
 
-    python render_paris_bus.py --gtfs IDFM-gtfs.zip --mode lines --out paris-bus-lines.mp4
-    python render_paris_bus.py --gtfs IDFM-gtfs.zip --mode speed --out paris-bus-speed.mp4
+    python render_paris_bus.py --gtfs IDFM-gtfs.zip --out paris-bus.mp4
 """
 import argparse
 import os
@@ -20,7 +19,6 @@ BBOX = (2.10, 48.66, 2.66, 49.03)
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--gtfs", required=True, help="GTFS zip or directory")
-    ap.add_argument("--mode", choices=["lines", "speed"], default="lines")
     ap.add_argument("--out", required=True, help=".mp4 (or .png with --still)")
     ap.add_argument("--weekday", default="tuesday")
     ap.add_argument("--date", help="YYYY-MM-DD, overrides --weekday")
@@ -49,9 +47,7 @@ def main():
 
     weekday = date.strftime("%A").upper()
     subtitle = f"EVERY BUS ON A TYPICAL {weekday}"
-    if a.mode == "speed":
-        subtitle += ", COLORED BY SPEED"
-    style = Style(mode=a.mode, seconds=a.seconds, fps=a.fps, subtitle=subtitle, date_label=date.strftime("%d %B %Y"))
+    style = Style(seconds=a.seconds, fps=a.fps, subtitle=subtitle, date_label=date.strftime("%d %B %Y"))
     scene = Scene(fleet, style, os.path.join(HERE, "assets/geo"), os.path.join(HERE, "assets/fonts"))
     if a.still:
         hh, mm = (int(x) for x in a.still.split(":"))

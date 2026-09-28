@@ -101,21 +101,12 @@ class Overlay:
         d.text((62, 150), f"{hh:02d}:{mm:02d}", font=self.f_clock, fill=WHITE)
         spaced(d, (70, 300), f"{st['buses']:,} buses in service".replace(",", " "), self.f_stat, (225, 228, 235, 255), 1.6)
         spaced(d, (70, 336), f"{st['lines']} bus lines running", self.f_stat, (225, 228, 235, 255), 1.6)
-        if s.mode == "speed":
-            spaced(d, (70, 372), f"average speed {st['avg_speed']:.1f} km/h", self.f_stat, (225, 228, 235, 255), 1.6)
 
         # legend
         y = 640
-        from .render import SPEED_BINS, speed_rgb
-
-        if s.mode == "speed":
-            spaced(d, (70, y - 40), "BUS SPEED", self.f_head, MUTED, 3.5)
-            rows = [(label, n, speed_rgb(np.array((lo + min(hi, 40)) / 2))) for (lo, hi, label), n in zip(SPEED_BINS, st["speed_bins"])]
-            scale = max(max(st["speed_bins"]), 1)
-        else:
-            spaced(d, (70, y - 40), "BUSIEST LINES RIGHT NOW", self.f_head, MUTED, 3.5)
-            rows = [(f"Bus {name}", n, rgb) for name, n, rgb in st["top"]]
-            scale = max([n for _, n, _ in rows] + [1])
+        spaced(d, (70, y - 40), "BUSIEST LINES RIGHT NOW", self.f_head, MUTED, 3.5)
+        rows = [(f"Bus {name}", n, rgb) for name, n, rgb in st["top"]]
+        scale = max([n for _, n, _ in rows] + [1])
         for label, n, rgb in rows:
             col = tuple(int(v * 255) for v in rgb) + (255,)
             d.ellipse((72, y + 5, 84, y + 17), fill=col)
